@@ -140,6 +140,47 @@ class Template:
         """
         system = system or self.default_system
         encoded_messages = []
+
+        # Check if any message has tool_calls - if so, use apply_chat_template for native support
+        has_tool_calls = any("tool_calls" in msg for msg in messages)
+
+        if has_tool_calls:
+            # Use tokenizer.apply_chat_template for native tool_calls support
+            # Build full message list with system prompt
+            full_messages = []
+            if system or tools:
+                tool_text = ""
+                if tools:
+                    try:
+                        tool_text = self.format_tools.apply(content=tools)[0]
+                    except Exception:
+                        tool_text = tools
+                full_messages.append({"role": "system", "content": system + tool_text})
+
+            full_messages.extend(messages)
+
+            # Encode each message individually with apply_chat_template for native tool_calls support
+            for i, message in enumerate(messages):
+                # Build message list up to and including current message
+                msg_list = []
+                if i == 0 and (system or tools):
+                    tool_text = ""
+                    if tools:
+                        try:
+                            tool_text = self.format_tools.apply(content=tools)[0]
+                        except Exception:
+                            tool_text = tools
+                    msg_list.append({"role": "system", "content": system + tool_text})
+
+                msg_list.extend(messages[:i+1])
+
+                # Encode this message list
+                encoded_ids = tokenizer.apply_chat_template(msg_list, tokenize=True, add_generation_prompt=False)
+                encoded_messages.append(encoded_ids)
+
+            return encoded_messages
+
+        # Original logic for messages without tool_calls
         for i, message in enumerate(messages):
             elements = []
 
@@ -561,6 +602,20 @@ def parse_template(tokenizer: "PreTrainedTokenizer") -> "Template":
     assistant_slot = assistant_slot[len(prefix) + len(user_slot) :]
     template_class = ReasoningTemplate if "<think>" in assistant_slot else Template
     assistant_slot = assistant_slot.replace("<think>", "").replace("</think>", "").lstrip("\n")  # remove thought tags
+
+    # Check if tokenizer supports tool_calls natively
+    messages_with_tools = [
+        {"role": "user", "content": "{{content}}"},
+        {"role": "assistant", "content": "{{content}}", "tool_calls": [{"function": {"name": "test", "arguments": "{}"}}]}
+    ]
+    try:
+        assistant_slot_with_tools = tokenizer.apply_chat_template(messages_with_tools, add_generation_prompt=False, tokenize=False)
+        assistant_slot_with_tools = assistant_slot_with_tools[len(prefix) + len(user_slot) :]
+        # If tool_calls are handled differently, use the new slot
+        if "<tool_call>" in assistant_slot_with_tools or "tool_call" in assistant_slot_with_tools.lower():
+            assistant_slot = assistant_slot_with_tools.replace("<think>", "").replace("</think>", "").lstrip("\n")
+    except Exception:
+        pass  # Tokenizer doesn't support tool_calls, use default assistant_slot
 
     if len(user_slot) > len(user_slot_empty_system):
         default_system = find_diff(user_slot_empty_system, user_slot)

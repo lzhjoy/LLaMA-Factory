@@ -256,11 +256,8 @@ class OpenAIDatasetConverter(DatasetConverter):
             role = message[self.dataset_attr.role_tag]
             content = message[self.dataset_attr.content_tag]
 
-            if role in [self.dataset_attr.assistant_tag, self.dataset_attr.function_tag]:
-                if "tool_calls" in message and len(message["tool_calls"]) > 0:
-                    tool_calls_list = [tool["function"] for tool in message["tool_calls"]]
-                    content = json.dumps(tool_calls_list, ensure_ascii=False)
-                    role = self.dataset_attr.function_tag
+            # Keep tool_calls in the message for native tokenizer support
+            # Don't convert tool_calls to JSON string - let apply_chat_template handle it
 
             if role == self.dataset_attr.observation_tag:
                 tool_responses.append(content)
@@ -275,12 +272,17 @@ class OpenAIDatasetConverter(DatasetConverter):
                 )
                 tool_responses = []
 
-            aligned_messages.append(
-                {
-                    "role": tag_mapping[role],
-                    "content": content,
-                }
-            )
+            # Build message dict with role and content
+            msg_dict = {
+                "role": tag_mapping[role],
+                "content": content,
+            }
+
+            # Preserve tool_calls field if present (for native tokenizer support)
+            if "tool_calls" in message:
+                msg_dict["tool_calls"] = message["tool_calls"]
+
+            aligned_messages.append(msg_dict)
 
         odd_tags = (Role.USER.value, Role.OBSERVATION.value)
         even_tags = (Role.ASSISTANT.value, Role.FUNCTION.value)

@@ -2,7 +2,10 @@
 
 ## 概述
 
-本文档详细展示从 ShareGPT 格式数据到完成训练的完整 API 调用链。
+本文档详细展示从 OpenAI 格式数据到完成训练的完整 API 调用链。
+
+**数据格式**：
+- **OpenAI 格式**：使用 `role`/`content` 字段，支持 user/assistant/tool 角色，包括 `tool_calls` 字段
 
 ---
 
@@ -153,73 +156,63 @@ def _load_single_dataset(dataset_attr, model_args, data_args, training_args):
 
 ## 第五层：数据格式转化
 
-### 6. ShareGPT 格式转化
+
+### 6. OpenAI 转化器实现（支持 tool_calls）
 
 ```python
 # src/llamafactory/data/converter.py
-def align_dataset_format(dataset, dataset_attr, data_args, training_args):
-    # 获取转化器
-    dataset_converter = get_dataset_converter(
-        dataset_attr.formatting,  # "sharegpt"
-        dataset_attr,
-        data_args
-    )
-    
-    # 应用转化器到每个样本
-    dataset = dataset.map(
-        dataset_converter,
-        batched=False,
-        remove_columns=list(dataset.column_names),
-        num_proc=data_args.preprocessing_num_workers,
-        desc="Converting format of dataset",
-    )
-    
-    return dataset
-```
-
-### 7. ShareGPT 转化器实现
-
-```python
-# src/llamafactory/data/converter.py
-class SharegptDatasetConverter(DatasetConverter):
+class OpenAIDatasetConverter(DatasetConverter):
     def __call__(self, example: dict):
-        # 输入：ShareGPT 格式
+        # 输入：OpenAI 格式
         # {
-        #   "conversations": [
-        #     {"from": "human", "value": "Q1"},
-        #     {"from": "gpt", "value": "A1"},
-        #     {"from": "human", "value": "Q2"},
-        #     {"from": "gpt", "value": "A2"}
-        #   ],
-        #   "tools": "[{...}]"
+        #   "messages": [
+        #     {"role": "system", "content": "You are..."},
+        #     {"role": "user", "content": "What's the weather?"},
+        #     {"role": "assistant", "content": null, "tool_calls": [
+        #       {"id": "call_123", "type": "function", "function": {...}}
+        #     ]},
+        #     {"role": "tool", "content": "Sunny, 25°C", "tool_call_id": "call_123"},
+        #     {"role": "assistant", "content": "The weather is sunny..."}
+        #   ]
         # }
-        
-        # 解析 conversations
-        prompt = aligned_messages[:-1]  # 所有消息除了最后一个
-        response = aligned_messages[-1:]  # 最后一个消息
-        
-        # 提取工具定义
-        tools = example.get("tools", "")
-        if isinstance(tools, (dict, list)):
-            tools = json.dumps(tools, ensure_ascii=False)
-        
-        # 输出：统一格式
+
+        # 关键处理：tool_calls 转换
+        for message in messages:
+            if message["role"] in ["assistant", "function"]:
+                if "tool_calls" in message and len(message["tool_calls"]) > 0:
+                    # 提取 function 部分并转为 JSON
+                    tool_calls_list = [tool["function"] for tool in message["tool_calls"]]
+                    content = json.dumps(tool_calls_list, ensure_ascii=False)
+                    role = "function"  # 标记为 function 角色
+
+        # role: "tool" 被映射到 observation 角色
+        if message["role"] == "tool":
+            # 累积工具响应
+            tool_responses.append(content)
+            continue
+
+        # 输出：统一格式（与 ShareGPT 相同）
         return {
-            "_prompt": prompt,      # [{"role": "user", "content": "..."}]
-            "_response": response,  # [{"role": "assistant", "content": "..."}]
-            "_system": system,      # "系统提示词"
-            "_tools": tools,        # JSON 字符串
+            "_prompt": prompt,
+            "_response": response,
+            "_system": system,
+            "_tools": tools,
             "_images": None,
             "_videos": None,
             "_audios": None,
         }
 ```
 
+**关键点**：
+- OpenAI 格式的 `tool_calls` 字段会被自动转换为 JSON 字符串
+- `role: "tool"` 被映射到内部的 `observation` 角色
+- 最终输出与 ShareGPT 格式相同，都是统一的内部格式
+
 ---
 
 ## 第六层：数据预处理和 Tokenization
 
-### 8. 预处理数据集
+### 7. 预处理数据集
 
 ```python
 # src/llamafactory/data/loader.py
@@ -241,7 +234,7 @@ def _get_preprocessed_dataset(dataset, data_args, training_args, stage, template
     return dataset
 ```
 
-### 9. 数据处理器（SupervisedDatasetProcessor）
+### 8. 数据处理器（SupervisedDatasetProcessor）
 
 ```python
 # src/llamafactory/data/processor/supervised.py
@@ -277,7 +270,7 @@ class SupervisedDatasetProcessor(DatasetProcessor):
         return model_inputs
 ```
 
-### 10. 编码单个样本
+### 9. 编码单个样本
 
 ```python
 # src/llamafactory/data/processor/supervised.py
@@ -325,7 +318,7 @@ def _encode_data_example(self, prompt, response, system, tools, images, videos, 
 
 ## 第七层：模板编码
 
-### 11. 多轮编码
+### 10. 多轮编码
 
 ```python
 # src/llamafactory/data/template.py 第 74-83 行
@@ -345,7 +338,7 @@ def encode_multiturn(self, tokenizer, messages, system=None, tools=None):
     ]
 ```
 
-### 12. 编码消息
+### 11. 编码消息
 
 ```python
 # src/llamafactory/data/template.py
@@ -380,7 +373,7 @@ def _encode(self, tokenizer, messages, system, tools):
 
 ## 第八层：数据整理和批处理
 
-### 13. 数据整理器
+### 12. 数据整理器
 
 ```python
 # src/llamafactory/data/collator.py
@@ -413,7 +406,7 @@ class SFTDataCollatorWith4DAttentionMask:
 
 ## 第九层：训练循环
 
-### 14. Trainer 训练
+### 13. Trainer 训练
 
 ```python
 # transformers/trainer.py (HuggingFace)
@@ -471,7 +464,7 @@ run_sft()
   │   │   ├─ _load_single_dataset()
   │   │   │   ├─ load_dataset()  # 加载原始 JSON
   │   │   │   └─ align_dataset_format()
-  │   │   │       └─ SharegptDatasetConverter()  # 转化为统一格式
+  │   │   │       └─ OpenAIDatasetConverter()  # 转化为统一格式
   │   │   └─ merge_dataset()
   │   └─ _get_preprocessed_dataset()
   │       └─ SupervisedDatasetProcessor.preprocess_dataset()
@@ -491,44 +484,66 @@ run_sft()
 
 ## 数据流转示例
 
-### 输入：ShareGPT 格式
+### 输入：OpenAI 格式（包含 tool_calls）
 
 ```json
 {
-  "conversations": [
-    {"from": "human", "value": "1+1=?"},
-    {"from": "gpt", "value": "2"},
-    {"from": "human", "value": "2+2=?"},
-    {"from": "gpt", "value": "4"}
-  ],
-  "tools": "[]"
+  "messages": [
+    {"role": "system", "content": "You are a helpful assistant."},
+    {"role": "user", "content": "What's the weather in New York?"},
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_123",
+          "type": "function",
+          "function": {
+            "name": "get_weather",
+            "arguments": "{\"location\": \"New York\"}"
+          }
+        }
+      ]
+    },
+    {"role": "tool", "content": "Sunny, 25°C", "tool_call_id": "call_123"},
+    {"role": "assistant", "content": "The weather in New York is sunny and 25°C."}
+  ]
 }
 ```
 
-### 转化 1：统一格式
+**说明**：
+- OpenAI 格式会被自动转换为内部统一格式
+- `tool_calls` 中的 `function` 部分会被转为 JSON 字符串
+- `role: "tool"` 会被映射到 `observation` 角色
+
+### 转化 1：OpenAI 格式转换为统一格式
 
 ```python
+# OpenAI 格式中的 tool_calls 被转换为 JSON 字符串
+# role: "tool" 被映射到 observation 角色
+
 {
   "_prompt": [
-    {"role": "user", "content": "1+1=?"},
-    {"role": "assistant", "content": "2"},
-    {"role": "user", "content": "2+2=?"}
+    {"role": "user", "content": "What's the weather in New York?"},
+    {"role": "function", "content": "[{\"name\": \"get_weather\", \"arguments\": \"{\\\"location\\\": \\\"New York\\\"}\"}]"},
+    {"role": "observation", "content": "Sunny, 25°C"}
   ],
   "_response": [
-    {"role": "assistant", "content": "4"}
+    {"role": "assistant", "content": "The weather in New York is sunny and 25°C."}
   ],
-  "_system": "detailed thinking off",
-  "_tools": "[]"
+  "_system": "You are a helpful assistant.",
+  "_tools": "[{\"name\": \"get_weather\", \"description\": \"...\", \"parameters\": {...}}]"
 }
 ```
 
 ### 转化 2：Tokenization（相邻配对）
 
 ```python
-# encode_multiturn 生成 2 个相邻 pair（不是累积配对！）
+# encode_multiturn 生成 4 个相邻 pair（不是累积配对！）
+# 每个 pair 只包含相邻的两个消息
 encoded_pairs = [
-    ([1, 2], [3, 4]),        # Pair 1: Q1 → A1
-    ([5, 6], [7, 8])         # Pair 2: Q2 → A2
+    ([1, 2], [3, 4]),        # Pair 1: user question → function call
+    ([5, 6], [7, 8]),        # Pair 2: observation → assistant response
 ]
 ```
 
@@ -536,46 +551,35 @@ encoded_pairs = [
 
 ```python
 # 顺序拼接所有 pair
-# Pair 1: source=[1,2], target=[3,4]
-# Pair 2: source=[5,6], target=[7,8]
+# Pair 1: source=[1,2], target=[3,4]  (user question → function call)
+# Pair 2: source=[5,6], target=[7,8]  (observation → assistant response)
 
 input_ids = [1, 2, 3, 4, 5, 6, 7, 8]
 labels =   [-100, -100, 3, 4, -100, -100, 7, 8]
-```
 
-### 转化 3b：Loss Mask（mask_history=True）
-
-```python
-# 反向拼接 pair（从最后一轮开始）
-# 初始化：input_ids = [], labels = []
-
-# 第 1 次迭代（Pair 2 - 最后一轮）：
-input_ids = [5, 6, 7, 8]
-labels = [-100, -100, 7, 8]
-
-# 第 2 次迭代（Pair 1 - 反向拼接）：
-input_ids = [1, 2, -100, -100] + [5, 6, 7, 8] = [1, 2, -100, -100, 5, 6, 7, 8]
-labels = [-100, -100, -100, -100] + [-100, -100, 7, 8] = [-100, -100, -100, -100, -100, -100, 7, 8]
-
-# 最终结果
-input_ids = [1, 2, -100, -100, 5, 6, 7, 8]
-labels =   [-100, -100, -100, -100, -100, -100, 7, 8]
+# 说明：
+# - 位置 0-1：user question，mask 掉（-100）
+# - 位置 2-3：function call，计算损失
+# - 位置 4-5：observation，mask 掉（-100）
+# - 位置 6-7：assistant response，计算损失
 ```
 
 ### 转化 4：Padding 和 Batching
 
 ```python
 {
-  "input_ids": tensor([[1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0]]),
-  "attention_mask": tensor([[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0]]),
-  "labels": tensor([[-100, 4, -100, -100, -100, 5, -100, -100, -100, -100, -100, 6, 0, -100, -100]])
+  "input_ids": tensor([[1, 2, 3, 4, 5, 6, 7, 8, 0, 0]]),
+  "attention_mask": tensor([[1, 1, 1, 1, 1, 1, 1, 1, 0, 0]]),
+  "labels": tensor([[-100, -100, 3, 4, -100, -100, 7, 8, -100, -100]])
 }
 ```
 
 **说明**：
-- Pair 1 贡献：input_ids=[1,2], labels=[-100,4]
-- Pair 2 贡献：input_ids=[3,4,5], labels=[-100,-100,-100,5]
-- Pair 3 贡献：input_ids=[6,7,8], labels=[-100,-100,-100,-100,-100,6]
+- 位置 0-1：user question，labels=[-100, -100]
+- 位置 2-3：function call，labels=[3, 4]（计算损失）
+- 位置 4-5：observation，labels=[-100, -100]
+- 位置 6-7：assistant response，labels=[7, 8]（计算损失）
+- 位置 8-9：padding，labels=[-100, -100]
 
 ### 转化 5：训练
 
@@ -725,6 +729,28 @@ data_args.neat_packing = True
 ### Q5：为什么需要 data_collator？
 
 **A**：data_collator 负责将多个样本组成一个批次，进行 padding、转换为 tensor 等操作。不同的任务需要不同的 data_collator。
+
+### Q6：OpenAI 格式支持 tool_calls 吗？
+
+**A**：是的，完全支持。OpenAI 格式中的 `tool_calls` 字段会被自动转换为 JSON 字符串，并标记为 `function` 角色。`role: "tool"` 的消息会被映射到内部的 `observation` 角色。
+
+### Q7：OpenAI 格式支持 reasoning_content 字段吗？
+
+**A**：不支持。目前 LLaMA-Factory 没有单独的 `reasoning_content` 字段支持。推理内容必须包含在 `content` 字段中，使用 `<think>...</think>` 标签。例如：
+```json
+{
+  "role": "assistant",
+  "content": "<think>\nLet me think...\n</think>\n\nThe answer is..."
+}
+```
+
+### Q8：encode_multiturn 生成的是相邻配对还是累积配对？
+
+**A**：是相邻配对。每个 pair 只包含相邻的两个消息，不包含历史。例如 3 轮对话生成 3 个 pair：`(Q1, A1)`, `(Q2, A2)`, `(Q3, A3)`。这样设计是为了避免系统提示和工具定义被重复编码多次。
+
+### Q9：对话历史是如何被模型学到的？
+
+**A**：通过 ShareGPT/OpenAI 格式的 `conversations`/`messages` 字段。在数据预处理时，完整的对话历史被保留在 prompt 中，模型通过学习 prompt 来理解对话历史。
 
 ---
 

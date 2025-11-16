@@ -165,23 +165,3 @@ labels:     [-100] [-100] [-100] [-100] [-100] [A3]
 | 模式 1 处理 | `src/llamafactory/data/processor/supervised.py` | 79-80 |
 | 模式 2 处理 | `src/llamafactory/data/processor/supervised.py` | 49-77 |
 
----
-
-## 常见问题
-
-### Q1：为什么 encode_multiturn 生成相邻配对而不是累积配对？
-
-**A**：因为 `_encode` 对每个消息单独编码，包括系统提示和工具定义。如果生成累积配对，会导致系统提示和工具定义被重复编码多次，浪费显存。相邻配对的设计更高效。
-
-### Q2：mask_history=True 时为什么要反向拼接？
-
-**A**：为了在 `cutoff_len` 限制下优先保留最后一轮。如果顺序拼接，可能会因为长度限制而丢弃最后一轮。反向拼接确保最后一轮总是被保留。
-
-### Q3：为什么 Pair 2 的 source 是 [Q2] 而不是 [Q1,A1,Q2]？
-
-**A**：因为 `_encode` 对每个消息单独编码。Pair 2 的 source 是 `encoded_messages[2]`，即第 3 个消息（Q2），不包含历史。
-
-### Q4：那对话历史是如何被模型学到的？
-
-**A**：通过 ShareGPT 格式的 `conversations` 字段。在数据预处理时，完整的对话历史被保留在 prompt 中，模型通过学习 prompt 来理解对话历史。
-
