@@ -233,7 +233,12 @@ class OpenAIDatasetConverter(DatasetConverter):
         tag_mapping = {
             self.dataset_attr.user_tag: Role.USER.value,
             self.dataset_attr.assistant_tag: Role.ASSISTANT.value,
-            self.dataset_attr.observation_tag: Role.OBSERVATION.value,
+            # NOTE:
+            # OpenAI 数据格式中，工具返回使用 role="tool"。
+            # 这里我们直接将其映射为内部的 Role.TOOL，后续由模板中的 format_tool 负责格式化。
+            # 之前的实现将其映射为 Role.OBSERVATION，导致在后续调试日志中看不到 "tool" 角色，
+            # 也容易和真正的 observation 角色混淆。
+            self.dataset_attr.observation_tag: Role.TOOL.value,
             self.dataset_attr.function_tag: Role.FUNCTION.value,
             self.dataset_attr.system_tag: Role.SYSTEM.value,
         }
@@ -266,7 +271,9 @@ class OpenAIDatasetConverter(DatasetConverter):
                 _content = "\n</tool_response>\n<tool_response>\n".join(tool_responses)
                 aligned_messages.append(
                     {
-                        "role": Role.OBSERVATION.value,
+                        # 聚合后的工具返回继续使用与 observation_tag 映射后的内部角色，
+                        # 对于当前 OpenAI 配置，即 Role.TOOL。
+                        "role": tag_mapping[self.dataset_attr.observation_tag],
                         "content": _content,
                     }
                 )
@@ -284,7 +291,10 @@ class OpenAIDatasetConverter(DatasetConverter):
 
             aligned_messages.append(msg_dict)
 
-        odd_tags = (Role.USER.value, Role.OBSERVATION.value)
+        # user 轮和工具返回轮都出现在「奇数位」上：
+        # - user: 用户提问
+        # - observation/tool: 工具调用的结果
+        odd_tags = (Role.USER.value, Role.OBSERVATION.value, Role.TOOL.value)
         even_tags = (Role.ASSISTANT.value, Role.FUNCTION.value)
         accept_tags = (odd_tags, even_tags)
         for turn_idx, message in enumerate(aligned_messages):

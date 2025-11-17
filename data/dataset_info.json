@@ -1,14 +1,17 @@
 {
   "toucan": {
-    "file_name": "toucan.jsonl",
+    "file_name": "toucan_debug.jsonl",
     "formatting": "openai",
+    "columns": {
+      "messages": "messages"
+    },
     "tags": {
       "role_tag": "role",
       "content_tag": "content",
       "user_tag": "user",
       "assistant_tag": "assistant",
-      "observation_tag": "tool",
-      "function_tag": "assistant"
+      "system_tag": "system",
+      "observation_tag": "tool"
     }
   },
   "identity": {

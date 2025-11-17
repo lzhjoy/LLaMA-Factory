@@ -89,6 +89,48 @@ class StringFormatter(Formatter):
 
 
 @dataclass
+class AssistantFormatter(StringFormatter):
+    """Formatter for assistant messages that may contain tool_calls."""
+    def __post_init__(self):
+        super().__post_init__()
+        self.tool_utils = get_tool_utils(self.tool_format)
+
+    @override
+    def apply(self, **kwargs) -> SLOTS:
+        content: str = kwargs.pop("content", "")
+        tool_calls = kwargs.pop("tool_calls", None)
+
+        # If there are tool_calls, format them
+        if tool_calls:
+            functions: list[FunctionCall] = []
+            try:
+                # tool_calls is a list of dicts with 'type' and 'function' keys
+                if isinstance(tool_calls, list):
+                    for tool_call in tool_calls:
+                        if isinstance(tool_call, dict):
+                            if "function" in tool_call:
+                                func = tool_call["function"]
+                                name = func.get("name", "")
+                                arguments = func.get("arguments", "{}")
+                                if isinstance(arguments, dict):
+                                    arguments = json.dumps(arguments, ensure_ascii=False)
+                                functions.append(FunctionCall(name, arguments))
+
+                if functions:
+                    function_str = self.tool_utils.function_formatter(functions)
+                    # Combine content and tool_calls
+                    if content:
+                        content = content + "\n" + function_str
+                    else:
+                        content = function_str
+            except Exception as e:
+                # If there's an error formatting tool_calls, just use the content
+                pass
+
+        return super().apply(content=content)
+
+
+@dataclass
 class FunctionFormatter(StringFormatter):
     def __post_init__(self):
         super().__post_init__()

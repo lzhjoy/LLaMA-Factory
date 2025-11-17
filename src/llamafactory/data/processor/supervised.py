@@ -40,6 +40,8 @@ class SupervisedDatasetProcessor(DatasetProcessor):
         videos: list["VideoInput"],
         audios: list["AudioInput"],
     ) -> tuple[list[int], list[int]]:
+        import sys
+        print(f"[ENCODE_CALLED] _encode_data_example called", file=sys.stderr)
         messages = self.template.mm_plugin.process_messages(prompt + response, images, videos, audios, self.processor)
         input_ids, labels = self.template.mm_plugin.process_token_ids(
             [], [], images, videos, audios, self.tokenizer, self.processor
@@ -47,6 +49,11 @@ class SupervisedDatasetProcessor(DatasetProcessor):
         encoded_pairs = self.template.encode_multiturn(self.tokenizer, messages, system, tools)
 
         # 调试：打印 template 应用后的信息
+        import sys
+        print(f"[DEBUG_CHECK] debug_template attr exists: {hasattr(self.data_args, 'debug_template')}", file=sys.stderr)
+        if hasattr(self.data_args, 'debug_template'):
+            print(f"[DEBUG_CHECK] debug_template value: {self.data_args.debug_template}", file=sys.stderr)
+
         if hasattr(self.data_args, 'debug_template') and self.data_args.debug_template:
             import sys
             print(f"\n{'='*80}", file=sys.stderr)
@@ -54,16 +61,16 @@ class SupervisedDatasetProcessor(DatasetProcessor):
             print(f"{'='*80}", file=sys.stderr)
             print(f"Messages count: {len(messages)}", file=sys.stderr)
             for i, msg in enumerate(messages):
-                print(f"  Message {i}: role={msg.get('role')}, content_len={len(msg.get('content', ''))}", file=sys.stderr)
+                has_tool_calls = "tool_calls" in msg
+                print(f"  Message {i}: role={msg.get('role')}, content_len={len(msg.get('content', ''))}, has_tool_calls={has_tool_calls}", file=sys.stderr)
             print(f"\nEncoded pairs count: {len(encoded_pairs)}", file=sys.stderr)
             for i, (source_ids, target_ids) in enumerate(encoded_pairs):
                 print(f"  Pair {i}: source_len={len(source_ids)}, target_len={len(target_ids)}", file=sys.stderr)
-                if len(source_ids) <= 100:
-                    print(f"    Source tokens: {source_ids}", file=sys.stderr)
-                    print(f"    Source text: {self.tokenizer.decode(source_ids)}", file=sys.stderr)
-                if len(target_ids) <= 100:
-                    print(f"    Target tokens: {target_ids}", file=sys.stderr)
-                    print(f"    Target text: {self.tokenizer.decode(target_ids)}", file=sys.stderr)
+                # Check if this is a cumulative pair
+                if len(target_ids) > len(source_ids) and target_ids[:len(source_ids)] == source_ids:
+                    print(f"    WARNING: Cumulative pair detected!", file=sys.stderr)
+                else:
+                    print(f"    OK: Adjacent pair", file=sys.stderr)
 
         total_length = len(input_ids) + (1 if self.template.efficient_eos else 0)
         if self.data_args.mask_history:
@@ -140,6 +147,8 @@ class SupervisedDatasetProcessor(DatasetProcessor):
     def preprocess_dataset(self, examples: dict[str, list[Any]]) -> dict[str, list[Any]]:
         # build inputs with format `<bos> X Y <eos>` and labels with format `<ignore> ... <ignore> Y <eos>`
         # for multiturn examples, we only mask the prompt part in each prompt-response pair.
+        import sys
+        print(f"[PREPROCESS_CALLED] preprocess_dataset called with {len(examples['_prompt'])} examples", file=sys.stderr)
         model_inputs = defaultdict(list)
         for i in range(len(examples["_prompt"])):
             if len(examples["_prompt"][i]) % 2 != 1 or len(examples["_response"][i]) != 1:

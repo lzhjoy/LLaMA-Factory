@@ -21,7 +21,7 @@ from typing_extensions import override
 
 from ..extras import logging
 from .data_utils import Role
-from .formatter import EmptyFormatter, FunctionFormatter, StringFormatter, ToolFormatter
+from .formatter import AssistantFormatter, EmptyFormatter, FunctionFormatter, StringFormatter, ToolFormatter
 from .mm_plugin import get_mm_plugin
 
 
@@ -44,6 +44,7 @@ class Template:
     format_system: "Formatter"
     format_function: "Formatter"
     format_observation: "Formatter"
+    format_tool: "Formatter"
     format_tools: "Formatter"
     format_prefix: "Formatter"
     default_system: str
@@ -80,6 +81,9 @@ class Template:
     ) -> list[tuple[list[int], list[int]]]:
         r"""Return multiple pairs of token ids representing prompts and responses respectively."""
         encoded_messages = self._encode(tokenizer, messages, system, tools)
+
+        # _encode already returns adjacent encodings (each message encoded separately)
+        # So we just need to pair them up: (msg0, msg1), (msg2, msg3), etc.
         return [(encoded_messages[i], encoded_messages[i + 1]) for i in range(0, len(encoded_messages), 2)]
 
     def extract_tool(self, content: str) -> Union[str, list["FunctionCall"]]:
@@ -145,38 +149,38 @@ class Template:
         has_tool_calls = any("tool_calls" in msg for msg in messages)
 
         if has_tool_calls:
-            # Use tokenizer.apply_chat_template for native tool_calls support
-            # Build full message list with system prompt
-            full_messages = []
-            if system or tools:
-                tool_text = ""
-                if tools:
-                    try:
-                        tool_text = self.format_tools.apply(content=tools)[0]
-                    except Exception:
-                        tool_text = tools
-                full_messages.append({"role": "system", "content": system + tool_text})
-
-            full_messages.extend(messages)
-
-            # Encode each message individually with apply_chat_template for native tool_calls support
+            # For messages with tool_calls, use the same approach as non-tool_calls
+            # but handle tool_calls field in assistant messages
             for i, message in enumerate(messages):
-                # Build message list up to and including current message
-                msg_list = []
-                if i == 0 and (system or tools):
-                    tool_text = ""
-                    if tools:
-                        try:
-                            tool_text = self.format_tools.apply(content=tools)[0]
-                        except Exception:
-                            tool_text = tools
-                    msg_list.append({"role": "system", "content": system + tool_text})
+                elements = []
 
-                msg_list.extend(messages[:i+1])
+                if i == 0:
+                    elements += self.format_prefix.apply()
+                    if system or tools:
+                        tool_text = self.format_tools.apply(content=tools)[0] if tools else ""
+                        elements += self.format_system.apply(content=(system + tool_text))
 
-                # Encode this message list
-                encoded_ids = tokenizer.apply_chat_template(msg_list, tokenize=True, add_generation_prompt=False)
-                encoded_messages.append(encoded_ids)
+                if message["role"] == Role.USER:
+                    elements += self.format_user.apply(content=message["content"], idx=str(i // 2))
+                elif message["role"] == Role.ASSISTANT:
+                    # For assistant messages with tool_calls, pass both content and tool_calls
+                    if "tool_calls" in message and isinstance(self.format_assistant, AssistantFormatter):
+                        elements += self.format_assistant.apply(
+                            content=message["content"],
+                            tool_calls=message.get("tool_calls")
+                        )
+                    else:
+                        elements += self.format_assistant.apply(content=message["content"])
+                elif message["role"] == Role.OBSERVATION:
+                    elements += self.format_observation.apply(content=message["content"])
+                elif message["role"] == Role.TOOL:
+                    elements += self.format_tool.apply(content=message["content"])
+                elif message["role"] == Role.FUNCTION:
+                    elements += self.format_function.apply(content=message["content"], thought_words=self.thought_words)
+                else:
+                    raise NotImplementedError("Unexpected role: {}".format(message["role"]))
+
+                encoded_messages.append(self._convert_elements_to_ids(tokenizer, elements))
 
             return encoded_messages
 
@@ -196,6 +200,8 @@ class Template:
                 elements += self.format_assistant.apply(content=message["content"])
             elif message["role"] == Role.OBSERVATION:
                 elements += self.format_observation.apply(content=message["content"])
+            elif message["role"] == Role.TOOL:
+                elements += self.format_tool.apply(content=message["content"])
             elif message["role"] == Role.FUNCTION:
                 elements += self.format_function.apply(content=message["content"], thought_words=self.thought_words)
             else:
@@ -504,6 +510,7 @@ def register_template(
     format_system: Optional["Formatter"] = None,
     format_function: Optional["Formatter"] = None,
     format_observation: Optional["Formatter"] = None,
+    format_tool: Optional["Formatter"] = None,
     format_tools: Optional["Formatter"] = None,
     format_prefix: Optional["Formatter"] = None,
     default_system: str = "",
@@ -555,6 +562,7 @@ def register_template(
         format_system=format_system or default_user_formatter,
         format_function=format_function or default_function_formatter,
         format_observation=format_observation or format_user or default_user_formatter,
+        format_tool=format_tool or format_observation or format_user or default_user_formatter,
         format_tools=format_tools or default_tool_formatter,
         format_prefix=format_prefix or default_prefix_formatter,
         default_system=default_system,
@@ -1843,10 +1851,13 @@ register_template(
 register_template(
     name="qwen",
     format_user=StringFormatter(slots=["<|im_start|>user\n{{content}}<|im_end|>\n<|im_start|>assistant\n"]),
-    format_assistant=StringFormatter(slots=["{{content}}<|im_end|>\n"]),
+    format_assistant=AssistantFormatter(slots=["{{content}}<|im_end|>\n"], tool_format="qwen"),
     format_system=StringFormatter(slots=["<|im_start|>system\n{{content}}<|im_end|>\n"]),
     format_function=FunctionFormatter(slots=["{{content}}<|im_end|>\n"], tool_format="qwen"),
     format_observation=StringFormatter(
+        slots=["<|im_start|>user\n<tool_response>\n{{content}}\n</tool_response><|im_end|>\n<|im_start|>assistant\n"]
+    ),
+    format_tool=StringFormatter(
         slots=["<|im_start|>user\n<tool_response>\n{{content}}\n</tool_response><|im_end|>\n<|im_start|>assistant\n"]
     ),
     format_tools=ToolFormatter(tool_format="qwen"),
