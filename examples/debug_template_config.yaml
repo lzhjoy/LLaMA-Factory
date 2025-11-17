@@ -1,0 +1,42 @@
+# 调试 Template 编码和 Loss Mask 的配置文件
+# 使用方法：python src/train.py examples/debug_template_config.yaml
+
+### 数据参数
+data_args:
+  template: qwen  # 根据你的模型选择合适的 template
+  dataset: toucan  # 替换为你的数据集名称
+  cutoff_len: 2048
+  train_on_prompt: false  # 只在 response 上计算 loss
+  mask_history: false  # 不 mask 历史
+  debug_template: true  # 启用 template 调试
+  max_samples: 1  # 只处理 1 个样本以便快速调试
+
+### 模型参数
+model_args:
+  model_name_or_path: Qwen/Qwen2.5-7B-Instruct  # 替换为你的模型
+  template: qwen
+  trust_remote_code: true
+
+### 训练参数
+training_args:
+  output_dir: ./output/debug_template
+  overwrite_output_dir: true
+  do_train: true
+  do_eval: false
+  do_predict: false
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 1
+  lr_scheduler_type: cosine
+  logging_steps: 1
+  save_steps: 500
+  learning_rate: 5.0e-5
+  num_train_epochs: 1
+  max_steps: 1  # 只运行 1 步
+  bf16: true
+  dataloader_num_workers: 0
+
+### 微调参数
+finetuning_args:
+  stage: sft
+  do_train: true
+

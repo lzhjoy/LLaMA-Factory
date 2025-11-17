@@ -45,6 +45,26 @@ class SupervisedDatasetProcessor(DatasetProcessor):
             [], [], images, videos, audios, self.tokenizer, self.processor
         )
         encoded_pairs = self.template.encode_multiturn(self.tokenizer, messages, system, tools)
+
+        # 调试：打印 template 应用后的信息
+        if hasattr(self.data_args, 'debug_template') and self.data_args.debug_template:
+            import sys
+            print(f"\n{'='*80}", file=sys.stderr)
+            print(f"[DEBUG] Template Encoding Information", file=sys.stderr)
+            print(f"{'='*80}", file=sys.stderr)
+            print(f"Messages count: {len(messages)}", file=sys.stderr)
+            for i, msg in enumerate(messages):
+                print(f"  Message {i}: role={msg.get('role')}, content_len={len(msg.get('content', ''))}", file=sys.stderr)
+            print(f"\nEncoded pairs count: {len(encoded_pairs)}", file=sys.stderr)
+            for i, (source_ids, target_ids) in enumerate(encoded_pairs):
+                print(f"  Pair {i}: source_len={len(source_ids)}, target_len={len(target_ids)}", file=sys.stderr)
+                if len(source_ids) <= 100:
+                    print(f"    Source tokens: {source_ids}", file=sys.stderr)
+                    print(f"    Source text: {self.tokenizer.decode(source_ids)}", file=sys.stderr)
+                if len(target_ids) <= 100:
+                    print(f"    Target tokens: {target_ids}", file=sys.stderr)
+                    print(f"    Target text: {self.tokenizer.decode(target_ids)}", file=sys.stderr)
+
         total_length = len(input_ids) + (1 if self.template.efficient_eos else 0)
         if self.data_args.mask_history:
             encoded_pairs = encoded_pairs[::-1]  # high priority for last turns
@@ -82,6 +102,38 @@ class SupervisedDatasetProcessor(DatasetProcessor):
         if self.template.efficient_eos:
             input_ids += [self.tokenizer.eos_token_id]
             labels += [self.tokenizer.eos_token_id]
+
+        # 调试：打印最终的 Loss Mask 信息
+        if hasattr(self.data_args, 'debug_template') and self.data_args.debug_template:
+            import sys
+            print(f"\n{'='*80}", file=sys.stderr)
+            print(f"[DEBUG] Final Loss Mask Information", file=sys.stderr)
+            print(f"{'='*80}", file=sys.stderr)
+            print(f"Total input_ids length: {len(input_ids)}", file=sys.stderr)
+            print(f"Total labels length: {len(labels)}", file=sys.stderr)
+            print(f"train_on_prompt: {self.data_args.train_on_prompt}", file=sys.stderr)
+            print(f"mask_history: {self.data_args.mask_history}", file=sys.stderr)
+
+            # 统计 IGNORE_INDEX 的数量
+            ignore_count = sum(1 for label in labels if label == IGNORE_INDEX)
+            compute_count = len(labels) - ignore_count
+            print(f"IGNORE_INDEX count: {ignore_count} ({100*ignore_count/len(labels):.1f}%)", file=sys.stderr)
+            print(f"Compute loss count: {compute_count} ({100*compute_count/len(labels):.1f}%)", file=sys.stderr)
+
+            # 打印前 200 个 token 的 mask 情况
+            print(f"\nFirst 200 tokens mask pattern (I=IGNORE, C=COMPUTE):", file=sys.stderr)
+            mask_pattern = "".join(["I" if label == IGNORE_INDEX else "C" for label in labels[:200]])
+            print(f"{mask_pattern}", file=sys.stderr)
+
+            # 打印 input_ids 和 labels
+            if len(input_ids) <= 200:
+                print(f"\nFull input_ids: {input_ids}", file=sys.stderr)
+                print(f"Full labels: {labels}", file=sys.stderr)
+                print(f"Decoded input: {self.tokenizer.decode(input_ids)}", file=sys.stderr)
+            else:
+                print(f"\nFirst 100 input_ids: {input_ids[:100]}", file=sys.stderr)
+                print(f"First 100 labels: {labels[:100]}", file=sys.stderr)
+            print(f"{'='*80}\n", file=sys.stderr)
 
         return input_ids, labels
 
