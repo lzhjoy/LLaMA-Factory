@@ -1,6 +1,6 @@
 {
   "toucan": {
-    "file_name": "toucan_debug.jsonl",
+    "file_name": "toucan.jsonl",
     "formatting": "openai",
     "columns": {
       "messages": "messages"

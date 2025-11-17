@@ -1,0 +1,47 @@
+### model
+model_name_or_path: /media/public/models/huggingface/Qwen/Qwen2.5-7B-Instruct
+template: qwen
+trust_remote_code: true
+
+### method
+stage: sft
+do_train: true
+do_eval: false          # 需要验证集时改成 true + 配 eval_dataset
+finetuning_type: full   # 全参数微调
+
+### dataset
+dataset: toucan         # 真正训练时改成你的大数据集名
+dataset_dir: data       # 如有需要可显式加上
+cutoff_len: 32768       # 对齐论文表格中的 Max Sequence Length
+max_samples: null       # 用完整数据；如需子集可设具体数字
+train_on_prompt: false
+mask_history: false
+overwrite_cache: true   # 避免之前那种缓存导致的编码不生效问题
+preprocessing_num_workers: 32   # 104 cores 足够撑 32 个预处理进程
+dataloader_num_workers: 8       # 每个进程 8 个 dataloader 线程
+
+### output
+output_dir: ./output/qwen2.5-7b-toucan
+logging_steps: 20
+save_steps: 2000
+save_total_limit: 3
+overwrite_output_dir: true
+report_to: tensorboard   # 或 none / wandb，看你实际用什么
+
+### train
+per_device_train_batch_size: 1   # 表格要求：per-device batch size = 1
+gradient_accumulation_steps: 8   # 8 张卡时有效 batch size = 1 * 8 * 8 = 64
+learning_rate: 2e-5              # 表格中的 2 × 10^-5
+weight_decay: 0.1
+warmup_ratio: 0.05
+lr_scheduler_type: cosine
+max_grad_norm: 1.0
+num_train_epochs: 1
+optim: adamw_torch               # AdamW 优化器
+adam_beta1: 0.9
+adam_beta2: 0.999
+adam_epsilon: 1.0e-8
+bf16: true                       # 对 H800 友好
+gradient_checkpointing: true
+ddp_timeout: 180000000
+deepspeed: examples/deepspeed/ds_z3_config.json  # 使用 DeepSpeed ZeRO-3
