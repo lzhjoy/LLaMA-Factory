@@ -8,7 +8,7 @@ from llamafactory.hparams import DataArguments
 import json
 
 # Load tokenizer and template
-tokenizer = AutoTokenizer.from_pretrained('/media/public/models/huggingface/Qwen/Qwen2.5-7B-Instruct')
+tokenizer = AutoTokenizer.from_pretrained('/media/public/models/huggingface/Qwen/Qwen3-0.6B')
 data_args = DataArguments(template='qwen')
 template = get_template_and_fix_tokenizer(tokenizer, data_args)
 
@@ -36,34 +36,5 @@ for i, enc in enumerate(encoded_messages):
     print(f"\nMessage {i}:")
     print(f"  Length: {len(enc)} tokens")
     print(f"  Decoded text:")
-    print(f"  {repr(decoded[:200])}")
-    print(f"  ...")
-    print(f"  {repr(decoded[-100:])}")
-
-# Now check pairs
-print("\n" + "="*80)
-print("Pair Analysis")
-print("="*80)
-
-encoded_pairs = template.encode_multiturn(tokenizer, messages, system=system, tools=None)
-
-for pair_idx, (source_ids, target_ids) in enumerate(encoded_pairs):
-    print(f"\nPair {pair_idx}:")
-    print(f"  Source: {len(source_ids)} tokens, Target: {len(target_ids)} tokens")
-    
-    source_decoded = tokenizer.decode(source_ids)
-    target_decoded = tokenizer.decode(target_ids)
-    
-    # Check if source ends with assistant prefix
-    if source_decoded.endswith('<|im_start|>assistant\n'):
-        print(f"  ✓ Source ends with '<|im_start|>assistant\\n'")
-    else:
-        print(f"  ✗ Source does NOT end with '<|im_start|>assistant\\n'")
-        print(f"    Last 50 chars: {repr(source_decoded[-50:])}")
-    
-    # Check if target starts with content (not with tags)
-    if target_decoded.startswith('<'):
-        print(f"  ✗ Target starts with tag: {repr(target_decoded)}")
-    else:
-        print(f"  ✓ Target starts with content: {repr(target_decoded)}")
+    print(f"  {repr(decoded)}")
 
