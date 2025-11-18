@@ -138,7 +138,7 @@ class DataArguments:
         metadata={"help": "Whether or not to use a shared file system for the datasets."},
     )
     debug_template: bool = field(
-        default=True,
+        default=False,
         metadata={"help": "Whether or not to print debug information about template encoding and loss masking."},
     )
 
